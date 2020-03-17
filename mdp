@@ -1,0 +1,59 @@
+#!/bin/bash
+
+serverPath="$(dirname $0)/mdp-server";
+scriptPath="$(dirname $0)/$(basename $0)";
+
+psOutput=$(ps -eo pid,ppid,comm | grep mdp | grep -v $$);
+
+if [[ ! -d $serverPath ]]
+then
+	echo "No server directory: $serverPath";
+	exit 1;
+fi
+
+if [[ -z "$1" ]]
+then
+	echo -ne "Missing argument\nUsage: $(basename $0) <file>\n";
+	exit 1;
+fi
+
+if [[ ! -f "$1" ]]
+then
+	echo -ne "Invalid argument: \"$1\" is not a file\n";
+	exit 1;
+fi
+
+if [[ ! -z "$psOutput" ]]
+then
+	echo -ne "Previous mdp instance(s) was not properly terminated:\n\n";
+	echo -ne "  PID STIME COMMAND\n";
+	ps -eo pid,stime,cmd | grep $scriptPath | grep -v $$ | grep -v "grep";
+	echo -ne "\nkill and retry\n";
+	exit 1;
+fi
+
+infilePath=$(readlink -m "$1");
+parentDir=$(dirname "$infilePath");
+
+inotifywait -qe close_write,moved_to,create -m $parentDir |
+while read -r directory events filename; do
+	if [ "$filename" = $(basename "$infilePath") ]; then
+		pandoc -s -f markdown -t html --metadata pagetitle="markdown" -H "$serverPath/header.html" "$infilePath" > "$serverPath/markdown.html";
+	fi
+done &
+
+port=3400;
+
+nweb $port "$serverPath";
+nwebid=$(ps aux | grep "nweb $port" | awk 'NR==1{print $2}');
+
+echo -ne "Previewing \"$(basename "$infilePath")\" on port $port\n";
+echo -ne "Press enter to stop";
+
+while read -s
+do
+	kill $nwebid;
+	kill $!;
+	echo -ne "\nStopped!\n";
+	exit 0;
+done
